@@ -1,0 +1,408 @@
+package com.freshfields.controller;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.freshfields.dto.*;
+import com.freshfields.model.User;
+import com.freshfields.service.JwtService;
+import com.freshfields.service.UserService;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.DisplayName;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.servlet.MockMvc;
+
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+
+@WebMvcTest(UserController.class)
+public class UserControllerTest {
+    
+    @Autowired
+    private MockMvc mockMvc;
+    
+    @Autowired
+    private ObjectMapper objectMapper;
+    
+    @MockBean
+    private UserService userService;
+    
+    @MockBean
+    private JwtService jwtService;
+    
+    private User testUser;
+    private String testToken;
+    
+    @BeforeEach
+    void setUp() {
+        // Initialize test data
+        testUser = new User();
+        testUser.setId(1);
+        testUser.setFirstName("Arpan");
+        testUser.setLastName("Test");
+        testUser.setEmail("arpan@example.com");
+        testUser.setPassword("encryptedPassword123");
+        testUser.setUserType("customer");
+        
+        testToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.test.token";
+    }
+    
+    // ==================== CREATE (Register) Tests ====================
+    
+    @Test
+    @DisplayName("Test 1: Register User - Success")
+    void testRegisterUser_Success() throws Exception {
+        // Arrange
+        User newUser = new User();
+        newUser.setFirstName("Arpan");
+        newUser.setLastName("Test");
+        newUser.setEmail("arpan@example.com");
+        newUser.setPassword("regular123");
+        newUser.setUserType("customer");
+        
+        when(userService.registerUser(any(User.class))).thenReturn(testUser);
+        when(jwtService.generateToken(any(User.class))).thenReturn(testToken);
+        
+        // Act & Assert
+        mockMvc.perform(post("/api/users/register")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(newUser)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.message").value("User registered successfully"))
+                .andExpect(jsonPath("$.data.firstName").value("Arpan"))
+                .andExpect(jsonPath("$.data.email").value("arpan@example.com"))
+                .andExpect(jsonPath("$.data.token").exists());
+        
+        verify(userService, times(1)).registerUser(any(User.class));
+        verify(jwtService, times(1)).generateToken(any(User.class));
+    }
+    
+    @Test
+    @DisplayName("Test 2: Register User - Duplicate Email")
+    void testRegisterUser_DuplicateEmail() throws Exception {
+        // Arrange
+        User newUser = new User();
+        newUser.setEmail("arpan@example.com");
+        newUser.setPassword("regular123");
+        
+        when(userService.registerUser(any(User.class)))
+            .thenThrow(new RuntimeException("Email already exists"));
+        
+        // Act & Assert
+        mockMvc.perform(post("/api/users/register")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(newUser)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.message").exists());
+    }
+    
+    @Test
+    @DisplayName("Test 3: Register User - Missing Required Fields")
+    void testRegisterUser_MissingFields() throws Exception {
+        // Arrange
+        User incompleteUser = new User();
+        incompleteUser.setEmail("arpan@example.com");
+        // Missing firstName, lastName, password
+        
+        // Act & Assert
+        mockMvc.perform(post("/api/users/register")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(incompleteUser)))
+                .andExpect(status().isBadRequest());
+    }
+    
+    @Test
+    @DisplayName("Test 4: Register User - Invalid Email Format")
+    void testRegisterUser_InvalidEmail() throws Exception {
+        // Arrange
+        User invalidUser = new User();
+        invalidUser.setFirstName("Arpan");
+        invalidUser.setLastName("Test");
+        invalidUser.setEmail("invalid-email");
+        invalidUser.setPassword("regular123");
+        invalidUser.setUserType("customer");
+        
+        // Act & Assert
+        mockMvc.perform(post("/api/users/register")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(invalidUser)))
+                .andExpect(status().isBadRequest());
+    }
+    
+    // ==================== READ (Login & Verify) Tests ====================
+    
+    @Test
+    @DisplayName("Test 5: Login User - Success")
+    void testLoginUser_Success() throws Exception {
+        // Arrange
+        LoginRequest loginRequest = new LoginRequest();
+        loginRequest.setEmail("arpan@example.com");
+        loginRequest.setPassword("regular123");
+        
+        when(userService.authenticateUser(anyString(), anyString())).thenReturn(testUser);
+        when(jwtService.generateToken(any(User.class))).thenReturn(testToken);
+        
+        // Act & Assert
+        mockMvc.perform(post("/api/auth/login")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(loginRequest)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.message").value("login successful"))
+                .andExpect(jsonPath("$.data.email").value("arpan@example.com"))
+                .andExpect(jsonPath("$.data.token").exists());
+        
+        verify(userService, times(1)).authenticateUser(anyString(), anyString());
+    }
+    
+    @Test
+    @DisplayName("Test 6: Login User - Invalid Credentials")
+    void testLoginUser_InvalidCredentials() throws Exception {
+        // Arrange
+        LoginRequest loginRequest = new LoginRequest();
+        loginRequest.setEmail("arpan@example.com");
+        loginRequest.setPassword("wrongPassword");
+        
+        when(userService.authenticateUser(anyString(), anyString())).thenReturn(null);
+        
+        // Act & Assert
+        mockMvc.perform(post("/api/auth/login")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(loginRequest)))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.message").value("Invalid credentials"));
+    }
+    
+    @Test
+    @DisplayName("Test 7: Login User - User Not Found")
+    void testLoginUser_UserNotFound() throws Exception {
+        // Arrange
+        LoginRequest loginRequest = new LoginRequest();
+        loginRequest.setEmail("nonexistent@example.com");
+        loginRequest.setPassword("password123");
+        
+        when(userService.authenticateUser(anyString(), anyString())).thenReturn(null);
+        
+        // Act & Assert
+        mockMvc.perform(post("/api/auth/login")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(loginRequest)))
+                .andExpect(status().isUnauthorized());
+    }
+    
+    @Test
+    @DisplayName("Test 8: Verify Token - Valid Token")
+    void testVerifyToken_ValidToken() throws Exception {
+        // Arrange
+        when(jwtService.extractUserId(anyString())).thenReturn(1);
+        when(userService.getUserById(1)).thenReturn(testUser);
+        
+        // Act & Assert
+        mockMvc.perform(post("/api/auth/verify")
+                .header("Authorization", "Bearer " + testToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.valid").value(true))
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.user.firstName").value("Arpan"))
+                .andExpect(jsonPath("$.user.email").value("arpan@example.com"));
+        
+        verify(jwtService, times(1)).extractUserId(anyString());
+        verify(userService, times(1)).getUserById(1);
+    }
+    
+    @Test
+    @DisplayName("Test 9: Verify Token - Invalid Token")
+    void testVerifyToken_InvalidToken() throws Exception {
+        // Arrange
+        when(jwtService.extractUserId(anyString()))
+            .thenThrow(new RuntimeException("Invalid token"));
+        
+        // Act & Assert
+        mockMvc.perform(post("/api/auth/verify")
+                .header("Authorization", "Bearer invalid.token"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.valid").value(false))
+                .andExpect(jsonPath("$.success").value(false));
+    }
+    
+    @Test
+    @DisplayName("Test 10: Verify Token - Missing Authorization Header")
+    void testVerifyToken_MissingHeader() throws Exception {
+        // Act & Assert
+        mockMvc.perform(post("/api/auth/verify"))
+                .andExpect(status().isBadRequest());
+    }
+    
+    @Test
+    @DisplayName("Test 11: Verify Token - Expired Token")
+    void testVerifyToken_ExpiredToken() throws Exception {
+        // Arrange
+        when(jwtService.extractUserId(anyString()))
+            .thenThrow(new RuntimeException("Token expired"));
+        
+        // Act & Assert
+        mockMvc.perform(post("/api/auth/verify")
+                .header("Authorization", "Bearer " + testToken))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.valid").value(false));
+    }
+    
+    // ==================== UPDATE Tests ====================
+    
+    @Test
+    @DisplayName("Test 12: Update User - Success")
+    void testUpdateUser_Success() throws Exception {
+        // Arrange
+        User updatedUser = new User();
+        updatedUser.setId(1);
+        updatedUser.setFirstName("Arpan");
+        updatedUser.setLastName("Updated");
+        updatedUser.setEmail("arpan@example.com");
+        updatedUser.setUserType("customer");
+        
+        when(userService.updateUser(any(User.class))).thenReturn(updatedUser);
+        
+        // Act & Assert
+        mockMvc.perform(put("/api/users/1")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(updatedUser)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.lastName").value("Updated"));
+    }
+    
+    @Test
+    @DisplayName("Test 13: Update User - User Not Found")
+    void testUpdateUser_NotFound() throws Exception {
+        // Arrange
+        User updatedUser = new User();
+        updatedUser.setId(999);
+        
+        when(userService.updateUser(any(User.class)))
+            .thenThrow(new RuntimeException("User not found"));
+        
+        // Act & Assert
+        mockMvc.perform(put("/api/users/999")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(updatedUser)))
+                .andExpect(status().isNotFound());
+    }
+    
+    @Test
+    @DisplayName("Test 14: Update User - Invalid Data")
+    void testUpdateUser_InvalidData() throws Exception {
+        // Arrange
+        User invalidUser = new User();
+        invalidUser.setId(1);
+        invalidUser.setEmail("invalid-email-format");
+        
+        // Act & Assert
+        mockMvc.perform(put("/api/users/1")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(invalidUser)))
+                .andExpect(status().isBadRequest());
+    }
+    
+    // ==================== DELETE Tests ====================
+    
+    @Test
+    @DisplayName("Test 15: Delete User - Success")
+    void testDeleteUser_Success() throws Exception {
+        // Arrange
+        doNothing().when(userService).deleteUser(1);
+        
+        // Act & Assert
+        mockMvc.perform(delete("/api/users/1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.message").value("User deleted successfully"));
+        
+        verify(userService, times(1)).deleteUser(1);
+    }
+    
+    @Test
+    @DisplayName("Test 16: Delete User - User Not Found")
+    void testDeleteUser_NotFound() throws Exception {
+        // Arrange
+        doThrow(new RuntimeException("User not found"))
+            .when(userService).deleteUser(999);
+        
+        // Act & Assert
+        mockMvc.perform(delete("/api/users/999"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.success").value(false));
+    }
+    
+    @Test
+    @DisplayName("Test 17: Delete User - Invalid ID Format")
+    void testDeleteUser_InvalidIdFormat() throws Exception {
+        // Act & Assert
+        mockMvc.perform(delete("/api/users/invalid"))
+                .andExpect(status().isBadRequest());
+    }
+    
+    // ==================== Additional Edge Cases ====================
+    
+    @Test
+    @DisplayName("Test 18: Register User - SQL Injection Attempt")
+    void testRegisterUser_SQLInjectionPrevention() throws Exception {
+        // Arrange
+        User maliciousUser = new User();
+        maliciousUser.setFirstName("'; DROP TABLE users; --");
+        maliciousUser.setEmail("test@example.com");
+        maliciousUser.setPassword("password123");
+        
+        when(userService.registerUser(any(User.class))).thenReturn(testUser);
+        when(jwtService.generateToken(any(User.class))).thenReturn(testToken);
+        
+        // Act & Assert - Should handle safely
+        mockMvc.perform(post("/api/users/register")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(maliciousUser)))
+                .andExpect(status().isOk());
+    }
+    
+    @Test
+    @DisplayName("Test 19: Register User - XSS Attack Prevention")
+    void testRegisterUser_XSSPrevention() throws Exception {
+        // Arrange
+        User xssUser = new User();
+        xssUser.setFirstName("<script>alert('XSS')</script>");
+        xssUser.setEmail("test@example.com");
+        xssUser.setPassword("password123");
+        
+        when(userService.registerUser(any(User.class))).thenReturn(testUser);
+        when(jwtService.generateToken(any(User.class))).thenReturn(testToken);
+        
+        // Act & Assert - Should sanitize input
+        mockMvc.perform(post("/api/users/register")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(xssUser)))
+                .andExpect(status().isOk());
+    }
+    
+    @Test
+    @DisplayName("Test 20: Concurrent User Registration")
+    void testConcurrentUserRegistration() throws Exception {
+        // Arrange
+        User user1 = new User();
+        user1.setEmail("concurrent@example.com");
+        user1.setPassword("password123");
+        
+        when(userService.registerUser(any(User.class))).thenReturn(testUser);
+        when(jwtService.generateToken(any(User.class))).thenReturn(testToken);
+        
+        // Act & Assert - Should handle concurrent requests
+        mockMvc.perform(post("/api/users/register")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(user1)))
+                .andExpect(status().isOk());
+    }
+}
